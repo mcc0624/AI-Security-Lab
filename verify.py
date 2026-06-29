@@ -13,7 +13,17 @@ import sys
 # 确保核心漏洞模块未被修改（学生应修复 fix/ 而非 core/）
 # ============================================================
 
-EXPECTED_HASHES = {}
+EXPECTED_HASHES = {
+    "auth.py": "fa3c8acba84b477708f92982a852733bab580c99581ced75f219697f6551116e",
+    "command_runner.py": "d6aa5133dd2219239d6beb46c3cd11eba49646a30134964b9157803bf67629d1",
+    "database.py": "cc1c5a5790f03ba59b0a1a722372cc8685db623baa86140c1a79149724b0045d",
+    "file_handler.py": "cb63ee9831ddbc68e4147675b2567f7891a31ceba45582f6ff4517d688128b36",
+    "page_loader.py": "b416a0424d9dbb0efc73d7cf60f768184abc7fe1b7c31eda29dc48cce65a9452",
+    "password_manager.py": "202ed2a9e42d29273c2e799535ca79b9a77a29b1dbd289d61f62bd8e975b63cf",
+    "url_fetcher.py": "73e6480d4e96633aa12fe5867eefa22b5e1e0f5ac0dfe9b588be387ac8014776",
+    "user_service.py": "54abd4817e67020f781c33b0167bb30b4451d3ec027f5f91eead7344afc744fb",
+    "xml_processor.py": "dc2a71f9cd901c1ad67091988edc51454ad7436519dbb6876e055ef4deb3ee5f",
+}
 
 def compute_file_hash(filepath):
     """计算文件的 SHA256 哈希值。"""
