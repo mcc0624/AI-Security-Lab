@@ -10,6 +10,12 @@
         默认账号: admin / admin123
         ============================================================
     -->
+    {% if message %}
+    <div class="alert alert-success">{{ message }}</div>
+    {% endif %}
+    {% if error %}
+    <div class="alert alert-danger">{{ error }}</div>
+    {% endif %}
     <form id="loginForm" method="POST" action="/login">
         <div class="form-group">
             <label for="username">用户名</label>

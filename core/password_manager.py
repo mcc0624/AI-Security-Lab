@@ -32,6 +32,14 @@ def change_password(username, new_password):
       4. 用户的密码被静默修改
     ============================================================
     """
+    # 同时更新数据库和内存中的用户存储
+
+    # 更新内存存储（auth.py 中的 USERS_DB）
+    from core.auth import USERS_DB
+    if username in USERS_DB:
+        USERS_DB[username]["password"] = new_password
+
+    # 更新数据库
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
     # 危险！直接修改密码，无任何二次验证

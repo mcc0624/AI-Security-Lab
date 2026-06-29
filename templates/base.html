@@ -24,6 +24,14 @@
         </div>
     </nav>
     <main class="container">
+        {% if session.get('username') %}
+        <div class="search-bar">
+            <form action="/search" method="GET" style="display:flex;gap:8px;width:100%;">
+                <input type="text" name="keyword" placeholder="搜索用户（试试输入: admin' OR '1'='1）" style="flex:1;">
+                <button type="submit" class="btn btn-primary">搜索</button>
+            </form>
+        </div>
+        {% endif %}
         {% block content %}{% endblock %}
     </main>
     <footer class="footer">
