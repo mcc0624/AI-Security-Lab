@@ -1,0 +1,24 @@
+{% extends "base.html" %}
+{% block title %}网络诊断{% endblock %}
+{% block content %}
+<div class="card ping-card">
+    <h2>网络连通性测试</h2>
+    <p>输入 IP 地址测试服务器连通性（仅用于教学演示）</p>
+    <form method="POST" action="/ping">
+        <div class="form-group">
+            <label for="ip">IP 地址</label>
+            <input type="text" id="ip" name="ip" placeholder="例如: 127.0.0.1" required>
+        </div>
+        <button type="submit" class="btn btn-primary">Ping</button>
+    </form>
+    {% if output %}
+    <div class="ping-result">
+        <h3>执行结果:</h3>
+        <pre class="console-output">{{ output }}</pre>
+    </div>
+    {% endif %}
+    {% if error %}
+    <p class="error-message">{{ error }}</p>
+    {% endif %}
+</div>
+{% endblock %}

@@ -1,0 +1,26 @@
+{% extends "base.html" %}
+{% block title %}登录{% endblock %}
+{% block content %}
+<div class="card login-card">
+    <h2>用户登录</h2>
+    <!--
+        ============================================================
+        VULN: 调试注释 - 泄露默认账号信息
+        生产环境不应在 HTML 注释中暴露任何凭据信息。
+        默认账号: admin / admin123
+        ============================================================
+    -->
+    <form id="loginForm" method="POST" action="/login">
+        <div class="form-group">
+            <label for="username">用户名</label>
+            <input type="text" id="username" name="username" required>
+        </div>
+        <div class="form-group">
+            <label for="password">密码</label>
+            <input type="password" id="password" name="password" required>
+        </div>
+        <button type="submit" class="btn btn-primary">登录</button>
+    </form>
+    <p class="form-footer">还没有账号？<a href="/register">立即注册</a></p>
+</div>
+{% endblock %}

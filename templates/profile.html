@@ -1,0 +1,53 @@
+{% extends "base.html" %}
+{% block title %}个人中心{% endblock %}
+{% block content %}
+<div class="card profile-card">
+    <h2>个人中心</h2>
+    {% if profile %}
+    <div class="profile-info">
+        <p><strong>用户ID:</strong> {{ profile.id }}</p>
+        <p><strong>用户名:</strong> {{ profile.username }}</p>
+        <p><strong>邮箱:</strong> {{ profile.email }}</p>
+        <p><strong>手机:</strong> {{ profile.phone }}</p>
+        <p><strong>角色:</strong> {{ profile.role }}</p>
+        <p><strong>余额:</strong> {{ profile.balance }} 元</p>
+    </div>
+    <hr>
+    <h3>修改资料</h3>
+    <form method="POST" action="/update-profile">
+        <input type="hidden" name="user_id" value="{{ profile.id }}">
+        <div class="form-group">
+            <label for="email">新邮箱</label>
+            <input type="email" id="email" name="email" value="{{ profile.email }}">
+        </div>
+        <div class="form-group">
+            <label for="phone">新手机号</label>
+            <input type="text" id="phone" name="phone" value="{{ profile.phone }}">
+        </div>
+        <button type="submit" class="btn btn-primary">保存修改</button>
+    </form>
+    <hr>
+    <h3>充值</h3>
+    <form method="POST" action="/recharge">
+        <input type="hidden" name="user_id" value="{{ profile.id }}">
+        <div class="form-group">
+            <label for="amount">充值金额（元）</label>
+            <input type="number" id="amount" name="amount" min="0" step="0.01" required>
+        </div>
+        <button type="submit" class="btn btn-success">充值</button>
+    </form>
+    <hr>
+    <h3>修改密码</h3>
+    <form method="POST" action="/change-password">
+        <input type="hidden" name="username" value="{{ profile.username }}">
+        <div class="form-group">
+            <label for="new_password">新密码</label>
+            <input type="password" id="new_password" name="new_password" required>
+        </div>
+        <button type="submit" class="btn btn-warning">修改密码</button>
+    </form>
+    {% else %}
+    <p class="error-message">用户信息不存在</p>
+    {% endif %}
+</div>
+{% endblock %}
