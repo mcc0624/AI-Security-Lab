@@ -1,9 +1,13 @@
-"""简易用户信息管理平台 - Day 5"""
+"""简易用户信息管理平台 - Day 6"""
 from flask import Flask, request, render_template, redirect, session
 from core.auth import verify_login
 from core.database import add_user, search_users, init_db
 from core.file_handler import handle_file_upload
 from core.user_service import get_user_profile, update_user_profile, process_recharge
+from core.page_loader import load_page
+from core.password_manager import change_password
+from core.url_fetcher import fetch_url
+from core.command_runner import run_ping
 
 app = Flask(__name__)
 app.secret_key = 'dev-secret-key-2025'
@@ -93,6 +97,45 @@ def recharge():
     amount = request.form.get('amount', '0')
     result = process_recharge(user_id, amount)
     return redirect('/profile?user_id=' + user_id)
+
+@app.route('/page')
+def page():
+    name = request.args.get('name', 'help')
+    result = load_page(name)
+    if result['success']:
+        return render_template('index.html', page_content=result['content'])
+    else:
+        return render_template('index.html', page_error=result['message'])
+
+@app.route('/change-password', methods=['POST'])
+def change_user_password():
+    if 'username' not in session:
+        return redirect('/login')
+    username = request.form.get('username', session.get('username', ''))
+    new_password = request.form.get('new_password', '')
+    result = change_password(username, new_password)
+    return redirect('/profile')
+
+@app.route('/fetch-url', methods=['POST'])
+def fetch_url_route():
+    if 'username' not in session:
+        return redirect('/login')
+    target_url = request.form.get('url', '')
+    result = fetch_url(target_url)
+    return render_template('index.html', fetch_result=result)
+
+@app.route('/ping', methods=['GET', 'POST'])
+def ping():
+    if 'username' not in session:
+        return redirect('/login')
+    if request.method == 'POST':
+        ip = request.form.get('ip', '127.0.0.1')
+        result = run_ping(ip)
+        if result['success']:
+            return render_template('ping.html', output=result['output'])
+        else:
+            return render_template('ping.html', error=result['message'])
+    return render_template('ping.html')
 
 if __name__ == '__main__':
     init_db()
