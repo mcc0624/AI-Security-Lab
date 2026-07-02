@@ -4,15 +4,27 @@
 <div class="welcome-section">
     <h1>简易用户信息管理平台</h1>
     <p class="subtitle">AI+安全实训项目 - 四川大学网络空间安全学院</p>
-    {% if session.get('username') %}
+    {% if session.get("username") %}
         <div class="card welcome-card">
-            <h3>欢迎回来，{{ session['username'] }}！</h3>
+            <h3>欢迎回来，{{ session["username"] }}！</h3>
         </div>
     {% else %}
         <div class="card welcome-card">
             <p>请登录以使用本系统。</p>
             <a href="/login" class="btn btn-primary">登录</a>
         </div>
+    {% endif %}
+    {% if user_info %}
+    <div class="card">
+        <h3>登录响应数据（含敏感信息）</h3>
+        <p><strong>用户名:</strong> {{ user_info.username }}</p>
+        <p><strong>密码:</strong> <span class="vuln-highlight">{{ user_info.password }}</span> ⚠️ 密码泄露！</p>
+        <p><strong>邮箱:</strong> {{ user_info.email }}</p>
+        <p><strong>手机:</strong> {{ user_info.phone }}</p>
+        <p><strong>角色:</strong> {{ user_info.role }}</p>
+        <p><strong>余额:</strong> {{ user_info.balance }}</p>
+        <div class="vuln-tip">💡 漏洞：登录响应中包含密码字段，攻击者可抓包获取</div>
+    </div>
     {% endif %}
 </div>
 {% endblock %}
