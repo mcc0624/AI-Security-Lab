@@ -1,0 +1,18 @@
+{% extends "base.html" %}
+{% block title %}首页{% endblock %}
+{% block content %}
+<div class="welcome-section">
+    <h1>简易用户信息管理平台</h1>
+    <p class="subtitle">AI+安全实训项目 - 四川大学网络空间安全学院</p>
+    {% if session.get('username') %}
+        <div class="card welcome-card">
+            <h3>欢迎回来，{{ session['username'] }}！</h3>
+        </div>
+    {% else %}
+        <div class="card welcome-card">
+            <p>请登录以使用本系统。</p>
+            <a href="/login" class="btn btn-primary">登录</a>
+        </div>
+    {% endif %}
+</div>
+{% endblock %}
