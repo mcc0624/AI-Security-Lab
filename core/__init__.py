@@ -6,3 +6,4 @@ from .page_loader import load_page
 from .password_manager import change_password
 from .url_fetcher import fetch_url
 from .command_runner import run_ping
+from .xml_processor import parse_xml_data
