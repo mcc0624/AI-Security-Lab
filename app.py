@@ -1,10 +1,12 @@
-"""简易用户信息管理平台 - Day 3"""
+"""简易用户信息管理平台 - Day 4"""
 from flask import Flask, request, render_template, redirect, session
 from core.auth import verify_login
-from core.database import query_users, search_users, add_user, init_db
+from core.database import add_user, search_users, init_db
+from core.file_handler import handle_file_upload
 
 app = Flask(__name__)
 app.secret_key = 'dev-secret-key-2025'
+app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024
 
 @app.route('/')
 def index():
@@ -49,11 +51,21 @@ def search():
     results = search_users(keyword)
     return render_template('index.html', search_results=results)
 
+@app.route('/upload', methods=['GET', 'POST'])
+def upload():
+    if 'username' not in session:
+        return redirect('/login')
+    if request.method == 'POST':
+        if 'file' not in request.files:
+            return render_template('upload.html', error='未选择文件')
+        file = request.files['file']
+        result = handle_file_upload(file)
+        if result['success']:
+            return render_template('upload.html', file_url=result['file_url'])
+        else:
+            return render_template('upload.html', error=result['message'])
+    return render_template('upload.html')
+
 if __name__ == '__main__':
     init_db()
-    print("=" * 50)
-    print("  Day 3 - 简易用户信息管理平台")
-    print("  访问地址: http://127.0.0.1:5000")
-    print("  默认账号: admin / admin123")
-    print("=" * 50)
     app.run(debug=True, host='0.0.0.0', port=5000)
