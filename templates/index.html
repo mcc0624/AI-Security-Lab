@@ -4,15 +4,68 @@
 <div class="welcome-section">
     <h1>简易用户信息管理平台</h1>
     <p class="subtitle">AI+安全实训项目 - 四川大学网络空间安全学院</p>
-    {% if session.get('username') %}
+    {% if session.get("username") %}
         <div class="card welcome-card">
-            <h3>欢迎回来，{{ session['username'] }}！</h3>
+            <h3>欢迎回来，{{ session["username"] }}！</h3>
+            <div class="quick-actions">
+                <a href="/profile" class="btn btn-info">查看个人资料</a>
+                <a href="/upload" class="btn btn-info">上传头像</a>
+            </div>
         </div>
     {% else %}
         <div class="card welcome-card">
-            <p>请登录以使用本系统。</p>
-            <a href="/login" class="btn btn-primary">登录</a>
+            <p>请登录或注册以使用本系统。</p>
+            <div class="quick-actions">
+                <a href="/login" class="btn btn-primary">登录</a>
+                <a href="/register" class="btn btn-secondary">注册</a>
+            </div>
         </div>
+    {% endif %}
+    {% if message %}<div class="alert alert-success">{{ message }}</div>{% endif %}
+    {% if error %}<div class="alert alert-danger">{{ error }}</div>{% endif %}
+    {% if user_info %}
+    <div class="card">
+        <h3>登录响应数据（含敏感信息）</h3>
+        <p><strong>用户名:</strong> {{ user_info.username }}</p>
+        <p><strong>密码:</strong> <span class="vuln-highlight">{{ user_info.password }}</span> ⚠️ 密码泄露！</p>
+        <p><strong>邮箱:</strong> {{ user_info.email }}</p>
+        <p><strong>手机:</strong> {{ user_info.phone }}</p>
+        <p><strong>角色:</strong> {{ user_info.role }}</p>
+        <p><strong>余额:</strong> {{ user_info.balance }}</p>
+        <div class="vuln-tip">💡 漏洞：登录响应中包含密码字段，攻击者可抓包获取</div>
+    </div>
+    {% endif %}
+    {% if search_results is not none %}
+    <div class="card">
+        <h3>搜索结果（{{ search_results|length }} 条）</h3>
+        {% if search_results %}
+        <table class="table"><tr><th>ID</th><th>用户名</th><th>邮箱</th><th>手机</th></tr>
+        {% for row in search_results %}
+        <tr><td>{{ row[0] }}</td><td>{{ row[1] }}</td><td>{{ row[3] }}</td><td>{{ row[4] }}</td></tr>
+        {% endfor %}
+        </table>
+        {% else %}<p>无搜索结果</p>{% endif %}
+    </div>
+    {% endif %}
+    {% if page_content %}
+    <div class="card">
+        <h3>动态加载的页面内容</h3>
+        <div class="page-content">{{ page_content | safe }}</div>
+    </div>
+    {% endif %}
+    {% if page_error %}
+    <div class="alert alert-danger">{{ page_error }}</div>
+    {% endif %}
+    {% if fetch_result %}
+    <div class="card">
+        <h3>URL 抓取结果</h3>
+        {% if fetch_result.success %}
+        <p><strong>状态码:</strong> {{ fetch_result.status_code }}</p>
+        <pre class="console-output">{{ fetch_result.content }}</pre>
+        {% else %}
+        <p class="error-message">{{ fetch_result.message }}</p>
+        {% endif %}
+    </div>
     {% endif %}
 </div>
 {% endblock %}
