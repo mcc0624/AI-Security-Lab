@@ -1,8 +1,9 @@
-"""简易用户信息管理平台 - Day 4"""
+"""简易用户信息管理平台 - Day 5"""
 from flask import Flask, request, render_template, redirect, session
 from core.auth import verify_login
 from core.database import add_user, search_users, init_db
 from core.file_handler import handle_file_upload
+from core.user_service import get_user_profile, update_user_profile, process_recharge
 
 app = Flask(__name__)
 app.secret_key = 'dev-secret-key-2025'
@@ -65,6 +66,33 @@ def upload():
         else:
             return render_template('upload.html', error=result['message'])
     return render_template('upload.html')
+
+@app.route('/profile')
+def profile():
+    if 'username' not in session:
+        return redirect('/login')
+    user_id = request.args.get('user_id', '1')
+    profile_data = get_user_profile(user_id)
+    return render_template('profile.html', profile=profile_data)
+
+@app.route('/update-profile', methods=['POST'])
+def update_profile():
+    if 'username' not in session:
+        return redirect('/login')
+    user_id = request.form.get('user_id', '1')
+    email = request.form.get('email', '')
+    phone = request.form.get('phone', '')
+    result = update_user_profile(user_id, email, phone)
+    return redirect('/profile?user_id=' + user_id)
+
+@app.route('/recharge', methods=['POST'])
+def recharge():
+    if 'username' not in session:
+        return redirect('/login')
+    user_id = request.form.get('user_id', '1')
+    amount = request.form.get('amount', '0')
+    result = process_recharge(user_id, amount)
+    return redirect('/profile?user_id=' + user_id)
 
 if __name__ == '__main__':
     init_db()
